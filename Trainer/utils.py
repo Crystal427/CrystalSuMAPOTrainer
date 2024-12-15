@@ -13,7 +13,7 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.transforms.functional import crop
 from transformers import PretrainedConfig
-
+from concurrent.futures import ThreadPoolExecutor
 from diffusers import DiffusionPipeline, UNet2DConditionModel
 
 
@@ -260,6 +260,8 @@ More information on all the CLI arguments and the environment are available on y
     return wandb_info
 
 
+
+
 def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
     # Preprocessing the datasets.
     train_flip = transforms.RandomHorizontalFlip(p=1.0)
@@ -284,6 +286,15 @@ def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
         
         return height, width
 
+    def process_image(image, target_h, target_w):
+        img_tensor = to_tensor(image)
+        if image.height > target_h or image.width > target_w:
+            img_tensor = transforms.Resize(
+                (target_h, target_w),
+                interpolation=transforms.InterpolationMode.BILINEAR
+            )(img_tensor)
+        return img_tensor
+
     def preprocess_train(examples):
         all_pixel_values = []
         images = [Image.open(io.BytesIO(im_bytes)).convert("RGB") for im_bytes in examples["jpg_0"]]
@@ -299,23 +310,14 @@ def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
         for col_name in ["jpg_0", "jpg_1"]:
             images = [Image.open(io.BytesIO(im_bytes)).convert("RGB") for im_bytes in examples[col_name]]
             if col_name == "jpg_1":
-                # Resize second image to match first image dimensions
                 images = [image.resize(original_sizes[i][::-1]) for i, image in enumerate(images)]
             
-            # Process each image with its adaptive size
-            pixel_values = []
-            for image, (target_h, target_w) in zip(images, adaptive_sizes):
-                # Convert to tensor first
-                img_tensor = to_tensor(image)
-                
-                # Resize only if necessary (for larger images)
-                if image.height > target_h or image.width > target_w:
-                    img_tensor = transforms.Resize(
-                        (target_h, target_w),
-                        interpolation=transforms.InterpolationMode.BILINEAR
-                    )(img_tensor)
-                
-                pixel_values.append(img_tensor)
+            # Process each image with its adaptive size using multithreading
+            with ThreadPoolExecutor() as executor:
+                pixel_values = list(executor.map(
+                    lambda img, size: process_image(img, *size),
+                    images, adaptive_sizes
+                ))
             
             all_pixel_values.append(pixel_values)
 
@@ -323,7 +325,6 @@ def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
         im_tup_iterator = zip(*all_pixel_values)
         combined_pixel_values = []
         for im_tup, label_0, (target_h, target_w) in zip(im_tup_iterator, examples["label_0"], adaptive_sizes):
-            # Label noise
             if args.label_noise_prob is not None and random.random() < args.label_noise_prob:
                 label_0 = 1 - label_0
 
@@ -332,7 +333,6 @@ def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
 
             combined_im = torch.cat(im_tup, dim=0)
 
-            # Cropping
             if not args.random_crop:
                 y1 = max(0, int(round((combined_im.shape[1] - target_h) / 2.0)))
                 x1 = max(0, int(round((combined_im.shape[2] - target_w) / 2.0)))
@@ -345,7 +345,6 @@ def get_dataset_preprocessor(args, tokenizer_one, tokenizer_two):
             crop_top_left = (y1, x1)
             crop_top_lefts.append(crop_top_left)
 
-            # Flipping
             if not args.no_hflip and random.random() < 0.5:
                 combined_im = train_flip(combined_im)
 
