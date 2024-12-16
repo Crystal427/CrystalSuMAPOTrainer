@@ -9,6 +9,8 @@ import io
 import re
 from datetime import datetime
 
+VALID_IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+
 def read_image_to_bytes(image_path, target_size=None):
     """读取图片并转换为bytes，可选择调整分辨率
     
@@ -113,7 +115,7 @@ def generate_caption(artist_folder, filename, results_json, src_img_path, featur
 
     return f"{prefix}, |||{suffix}"
 
-def generate_parquet(base_dir, output_path, chunk_size=300*1024*1024):
+def generate_parquet(base_dir, output_path, chunk_size=4096*1024*1024):
     """生成parquet文件
     
     Args:
@@ -139,17 +141,28 @@ def generate_parquet(base_dir, output_path, chunk_size=300*1024*1024):
         if not os.path.isdir(artist_dir):
             continue
             
+        dpo_dir = os.path.join(artist_dir, 'DPO_generated')
+        # 检查DPO_generated文件夹是否存在且包含至少20张图片
+        if not os.path.exists(dpo_dir):
+            print(f"Warning: DPO_generated folder not found in {artist}, skipping")
+            continue
+            
+        dpo_images = [f for f in os.listdir(dpo_dir) if f.lower().endswith(VALID_IMG_EXTENSIONS)]
+        if len(dpo_images) < 20:
+            print(f"Warning: Not enough DPO images in {artist} (found {len(dpo_images)}), skipping")
+            continue
+            
         orig_dir = os.path.join(artist_dir, 'OriginalPic')
         if not os.path.exists(orig_dir):
             continue
             
         for img_name in os.listdir(orig_dir):
-            if not img_name.endswith(('.jpg', '.png')):
+            if not img_name.lower().endswith(VALID_IMG_EXTENSIONS):
                 continue
                 
             img_path = os.path.join(orig_dir, img_name)
-            total_size += os.path.getsize(img_path) * 4  # 原图 + 2个DPO图片 + 额外开销
-            
+            total_size += os.path.getsize(img_path) * 4
+
     estimated_chunks = max(1, total_size // chunk_size + 1)
     
     # 遍历artist目录
@@ -176,7 +189,7 @@ def generate_parquet(base_dir, output_path, chunk_size=300*1024*1024):
             
         # 处理每张原始图片
         for img_name in os.listdir(orig_dir):
-            if not img_name.endswith(('.jpg', '.png')):
+            if not img_name.lower().endswith(VALID_IMG_EXTENSIONS):
                 continue
                 
             if img_name not in results_json:
@@ -187,7 +200,7 @@ def generate_parquet(base_dir, output_path, chunk_size=300*1024*1024):
             base_name = os.path.splitext(img_name)[0]
             dpo_images = []
             for i in range(1, 5):
-                dpo_path = os.path.join(dpo_dir, f"{base_name}_DPO{i}.png")
+                dpo_path = os.path.join(dpo_dir, f"{base_name}_DPO{i}.webp")
                 if os.path.exists(dpo_path):
                     dpo_images.append(dpo_path)
                     
@@ -248,6 +261,6 @@ def save_parquet(data, output_path, file_count, total_chunks):
     print(f"已保存 {output_file}")
 
 if __name__ == "__main__":
-    base_dir = r"F:\Dataset_selected_MAPO_2"  # 修改为实际路径
-    output_path = r"F:\Dataset_selected_MAPO_2"  # 修改为实际输出路径
+    base_dir = r"F:\Dataset_selected_MAPO_Run_1126"  # 修改为实际路径
+    output_path = r"F:\Dataset_selected_MAPO"  # 修改为实际输出路径
     generate_parquet(base_dir, output_path)
