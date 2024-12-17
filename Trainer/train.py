@@ -285,7 +285,6 @@ def main(args):
         args.dataset_name,
         cache_dir=args.cache_dir,
         split=args.dataset_split_name,
-        num_proc=2,
     )
 
     # Preprocessing the datasets.
