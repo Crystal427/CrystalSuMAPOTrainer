@@ -313,6 +313,21 @@ def parse_args(input_args=None):
 
     parser.add_argument("--divisible", type=int, default=8, help="Make sure dimensions are divisible by this number")
 
+    # Add new arguments for ZTSNR
+    parser.add_argument(
+        "--prediction_type",
+        type=str,
+        default=None,
+        choices=["epsilon", "v_prediction"],
+        help="Prediction type of the scheduler function.",
+    )
+    
+    parser.add_argument(
+        "--zero_terminal_snr",
+        action="store_true",
+        help="Apply zero terminal SNR technique to the noise scheduler.",
+    )
+
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:

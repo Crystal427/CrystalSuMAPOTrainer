@@ -125,6 +125,42 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir=args.cache_dir
     )
 
+    # Add prediction type override
+    if args.prediction_type is not None:
+        noise_scheduler.config.prediction_type = args.prediction_type
+
+    # Apply Zero Terminal SNR if enabled
+    if args.zero_terminal_snr:
+        def enforce_zero_terminal_snr(betas):
+            # Convert betas to alphas_bar_sqrt
+            alphas = 1 - betas
+            alphas_bar = alphas.cumprod(0)
+            alphas_bar_sqrt = alphas_bar.sqrt()
+
+            # Store old values
+            alphas_bar_sqrt_0 = alphas_bar_sqrt[0].clone()
+            alphas_bar_sqrt_T = alphas_bar_sqrt[-1].clone()
+            # Shift so last timestep is zero
+            alphas_bar_sqrt -= alphas_bar_sqrt_T
+            # Scale so first timestep is back to old value
+            alphas_bar_sqrt *= alphas_bar_sqrt_0 / (alphas_bar_sqrt_0 - alphas_bar_sqrt_T)
+
+            # Convert alphas_bar_sqrt to betas
+            alphas_bar = alphas_bar_sqrt**2
+            alphas = alphas_bar[1:] / alphas_bar[:-1]
+            alphas = torch.cat([alphas_bar[0:1], alphas])
+            betas = 1 - alphas
+            return betas
+
+        betas = noise_scheduler.betas
+        betas = enforce_zero_terminal_snr(betas)
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+
+        noise_scheduler.betas = betas
+        noise_scheduler.alphas = alphas
+        noise_scheduler.alphas_cumprod = alphas_cumprod
+
     text_encoder_one = text_encoder_cls_one.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
